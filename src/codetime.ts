@@ -1,10 +1,11 @@
-import * as os from 'node:os'
-import process from 'node:process'
-import { got } from 'got'
-import type { Got } from 'got'
+import * as os from 'os';
+import process from 'process';
+import got from 'got';
 
-import * as vscode from 'vscode'
-import { v4 } from 'uuid'
+
+import * as vscode from 'vscode';
+import { v4 } from 'uuid';
+
 import osName from 'os-name'
 import * as events from './events'
 import { getDurationText } from './getDurationText'
@@ -12,6 +13,8 @@ import { getGitCurrentBranch, getGitOriginUrl } from './utils'
 
 export class CodeTime {
   osName = osName()
+  private lastActivityTime: number = Date.now();
+
   setToken() {
     vscode.window
       .showInputBox({
@@ -40,7 +43,7 @@ export class CodeTime {
 
   public disposable!: vscode.Disposable
   state: vscode.Memento
-  client: Got
+  client: any;
   userId: number
   token: string = ''
   inter!: NodeJS.Timeout
@@ -50,7 +53,7 @@ export class CodeTime {
     this.userId = this.getUserId()
     this.initSetToken()
     this.client = got.extend({
-      prefixUrl: vscode.workspace.getConfiguration('codetime').serverEntrypoint,
+      prefixUrl: vscode.workspace.getConfiguration('codetime').serverEntrypoint as string,
       responseType: 'json',
       headers: {
         'User-Agent': 'CodeTime Client',
@@ -63,7 +66,7 @@ export class CodeTime {
           },
         ],
       },
-    })
+    } as any);
     this.session = v4()
     this.init()
   }
@@ -92,10 +95,15 @@ export class CodeTime {
     this.setupEventListeners()
     this.getCurrentDuration()
     this.inter = setInterval(() => {
-      this.getCurrentDuration()
-      // TODO: Upload Local Data
-      // this.uploadLocalData();
-    }, 60 * 1000)
+      const timeoutTime = vscode.workspace.getConfiguration('codetime').get<number>('timeoutTime', 600000); // 600000 is the default value
+      if (Date.now() - this.lastActivityTime > timeoutTime) {
+        // User is inactive for more than the configured timeout time, handle accordingly
+        // For example, update the status bar to indicate inactivity
+      } else {
+        // User is active, continue logging time or perform other actions
+        this.getCurrentDuration();
+      }
+    }, 60000); // Check every minute
   }
 
   private setupEventListeners(): void {
@@ -114,6 +122,7 @@ export class CodeTime {
   }
 
   private onEdit(e: vscode.TextDocumentChangeEvent) {
+    this.lastActivityTime = Date.now();
     let eventName = events.FILE_EDITED
     if (e.contentChanges.length === 1
       && /\r\n|\n|\r/.test(e.contentChanges[0].text)) {
@@ -124,18 +133,22 @@ export class CodeTime {
   }
 
   private onEditor(_e: vscode.TextEditor | undefined) {
+    this.lastActivityTime = Date.now();
     this.onChange(events.ACTIVATE_FILE_CHANGED)
   }
 
   private onFocus(_e: vscode.WindowState) {
+    this.lastActivityTime = Date.now();
     this.onChange(events.EDITOR_CHANGED)
   }
 
   private onCreate() {
+    this.lastActivityTime = Date.now();
     this.onChange(events.FILE_CREATED)
   }
 
   private onSave(_e: vscode.TextDocument) {
+    this.lastActivityTime = Date.now();
     this.onChange(events.FILE_SAVED)
   }
 
@@ -176,23 +189,6 @@ export class CodeTime {
           }
           // Post data
           this.client.post(`eventLog`, { json: data }).catch((e: { response: { statusCode: number } }) => {
-            // if (
-            //   e.response.statusCode === 400
-            //   || e.response.statusCode === 403
-            // ) {
-            //   this.statusBar.text = '$(alert) CodeTime: Token invalid'
-            //   this.statusBar.tooltip = 'Enter Token'
-            //   this.statusBar.command = 'codetime.getToken'
-            // }
-            // else if (e.response.statusCode === 401) {
-            //   this.statusBar.text = '$(alert) CodeTime: Token invalid'
-            //   this.statusBar.tooltip = 'Enter Token'
-            //   this.statusBar.command = 'codetime.getToken'
-            // }
-            // else {
-            //   this.statusBar.text = '$(clock) CodeTime: Temporarily disconnect'
-            //   this.statusBar.command = 'codetime.toDashboard'
-            // }
             // eslint-disable-next-line no-console
             console.info(e)
             // TODO: Append Data To Local
@@ -204,6 +200,12 @@ export class CodeTime {
   }
 
   private getCurrentDuration(showSuccess = false) {
+    // Check for inactivity
+    const timeoutTime = vscode.workspace.getConfiguration('codetime').get<number>('timeoutTime', 600000); // 600000 ms = 10 minutes
+    if (Date.now() - this.lastActivityTime > timeoutTime) { // Use the configurable timeout time
+      // Consider user inactive, do not log time
+      return;
+    }
     const key = vscode.workspace.getConfiguration('codetime').statusBarInfo
     if (this.token === '') {
       this.statusBar.text = '$(clock) CodeTime: Without Token'
@@ -236,12 +238,12 @@ export class CodeTime {
         break
       }
     }
-    this.client.get<{ minutes: number }>(`user/minutes?minutes=${minutes}`).then((res) => {
-      const { minutes } = res.body
-      this.statusBar.text = `$(watch) ${getDurationText(minutes * 60 * 1000)}`
+    this.client.get(`user/minutes?minutes=${minutes}`).then((res: { body: { minutes: number } }) => {
+      const { minutes } = res.body;
+      this.statusBar.text = `$(watch) ${getDurationText(minutes * 60 * 1000)}`;
       if (showSuccess)
-        vscode.window.showInformationMessage('CodeTime: Token validation succeeded')
-    })
+        vscode.window.showInformationMessage('CodeTime: Token validation succeeded');
+    });
   }
 
   public codeTimeInStatBar() {
